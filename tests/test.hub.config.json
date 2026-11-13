@@ -1,0 +1,35 @@
+{
+  "hubName": "Zuschauer-Hub",
+  "currencyName": "Bananen",
+  "currencyEmoji": "🍌",
+  "checkinBananas": 25,
+  "followBonus": 100,
+  "leaderboardSize": 10,
+  "actions": [
+    {
+      "id": "sound",
+      "type": "sound",
+      "name": "Sound abspielen",
+      "description": "Spielt einen Sound im Stream ab.",
+      "cost": 20,
+      "cooldownSeconds": 30
+    },
+    {
+      "id": "bananenregen",
+      "type": "rain",
+      "name": "Bananenregen",
+      "description": "Lässt Bananen über den ganzen Stream regnen.",
+      "cost": 50,
+      "cooldownSeconds": 60
+    },
+    {
+      "id": "abstimmung",
+      "type": "vote",
+      "name": "Nächstes Spiel wählen",
+      "description": "Gib deine Stimme für das nächste Spiel ab.",
+      "cost": 10,
+      "cooldownSeconds": 0,
+      "options": ["Minecraft", "Mario Kart", "Fortnite"]
+    }
+  ]
+}

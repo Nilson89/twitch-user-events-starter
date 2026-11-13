@@ -9,7 +9,9 @@ import { fileURLToPath } from 'node:url';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-export const CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, 'hub.config.json'), 'utf8'));
+// Der Test nutzt eine eigene, feste Konfiguration. So bleibt er grün, auch wenn du hub.config.json anpasst.
+export const TEST_CONFIG_FILE = 'tests/test.hub.config.json';
+export const CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, TEST_CONFIG_FILE), 'utf8'));
 
 export const SECRETS = {
   clientId: 'testclientid_' + crypto.randomBytes(6).toString('hex'),
@@ -50,6 +52,7 @@ export async function startApp({ fake, env = {}, full = true } = {}) {
     PORT: String(port),
     BASE_URL: baseUrl,
     DATABASE_URL: `file:${dbFile}`,
+    HUB_CONFIG_FILE: TEST_CONFIG_FILE,
   };
   const fullEnv = full
     ? {

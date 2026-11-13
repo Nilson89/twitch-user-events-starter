@@ -205,7 +205,7 @@ test('Funktion: Aktion einlösen zieht Bananen ab', T, async () => {
 test('Funktion: Overlay zeigt eingelöste Aktionen live an', T, async () => {
   const waiter = waitForOverlayEvent(app, (ev) => ev.type === 'redeem' && ev.actionId === SOUND.id);
   const status = await waiter.ready;
-  assert.equal(status, 200, `/overlay/events mit richtigem Schlüssel: ${status}`);
+  assert.equal(status, 200, status === 0 ? '/overlay/events antwortet nicht. Werden die Header sofort gesendet (res.flushHeaders())?' : `/overlay/events mit richtigem Schlüssel: ${status}`);
   const r = await redeem(S.main.cookie, { actionId: SOUND.id });
   assert.equal(r.status, 200, `Einlösen: ${r.status} ${r.text}`);
   const { event } = await waiter.result;
@@ -378,14 +378,15 @@ test('Funktion: Twitch-Webhook-Bestätigung (Challenge)', T, async () => {
 test('Angriff: 20 gleichzeitige Einlösungen (Race Condition)', T, async () => {
   const s = await doLogin('racer');
   assert.equal((await api(app, 'POST', '/api/checkin', { cookie: s.cookie })).status, 200);
-  await sendWebhook(app, { subscriptionType: 'channel.follow', event: followEvent(U.racer) });
   const start = await bananas(s.cookie);
-  assert.equal(start, CONFIG.checkinBananas + CONFIG.followBonus);
+  assert.equal(start, CONFIG.checkinBananas);
+  const maxOk = Math.floor(start / VOTE.cost);
   const results = await Promise.all(Array.from({ length: 20 }, () => redeem(s.cookie, { actionId: VOTE.id, option: VOTE.options[1] })));
   const ok = results.filter((r) => r.status === 200).length;
   for (const r of results) assert.ok([200, 402, 429].includes(r.status), `Unerwarteter Status ${r.status}`);
   const end = await bananas(s.cookie);
   assert.ok(ok >= 1, 'Keine einzige Einlösung hat geklappt');
+  assert.ok(ok <= maxOk, `${ok} Einlösungen geklappt, obwohl das Guthaben nur für ${maxOk} reicht`);
   assert.ok(end >= 0, `Kontostand ist negativ: ${end}`);
   assert.equal(end, start - ok * VOTE.cost, `Kontostand passt nicht: ${ok} Einlösungen, aber ${start - end} Bananen weg`);
 });
@@ -398,10 +399,17 @@ test('Angriff: Schadcode im Twitch-Namen (XSS)', T, async () => {
   assert.ok(!page.includes('<img src=x onerror'), 'Startseite enthält den Schadcode ungefiltert');
   const overlay = await (await fetch(`${app.baseUrl}/overlay?key=${SECRETS.overlayKey}`)).text();
   assert.ok(!overlay.includes('<img src=x onerror'), 'Overlay enthält den Schadcode ungefiltert');
+  const payload = encodeURIComponent('<img src=x onerror=alert(1)>');
+  const errPage = await (await fetch(`${app.baseUrl}/auth/callback?error=${payload}&error_description=${payload}`, { redirect: 'manual' })).text();
+  assert.ok(!errPage.includes('<img src=x onerror'), 'Die Login-Fehlerseite gibt den Schadcode aus der URL ungefiltert aus');
 
   const forbidden = /\b(innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\s*\(|new\s+Function)\b/;
   for (const f of [...listFiles('public', ['.js', '.html']), ...listFiles('views', ['.js', '.html'])]) {
-    const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    const src = fs
+      .readFileSync(path.join(ROOT, f), 'utf8')
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
     assert.ok(!forbidden.test(src), `${f} nutzt eine unsichere Funktion (${src.match(forbidden)?.[0]}). Bitte textContent verwenden.`);
     if (f.endsWith('.html')) {
       assert.ok(!/\son[a-z]+\s*=/i.test(src), `${f} enthält Inline-Eventhandler (on…=)`);

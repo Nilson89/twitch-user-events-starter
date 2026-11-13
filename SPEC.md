@@ -53,6 +53,8 @@ Die Starter-Dateien `src/server.js`, `public/index.html` und `public/style.css` 
 
 **Nicht verändern:** `tests/`, `hub.config.json` (nur lesen), `SECURITY.md`, `SPEC.md`, `.claude/`.
 
+Der Hackertest nutzt seine eigene Konfiguration `tests/test.hub.config.json` (über `HUB_CONFIG_FILE`). So bleibt er grün, auch wenn der Streamer `hub.config.json` anpasst.
+
 ## 3. Konfiguration
 
 ### Umgebungsvariablen
@@ -61,7 +63,7 @@ Die Starter-Dateien `src/server.js`, `public/index.html` und `public/style.css` 
 | --- | --- | --- |
 | `PORT` | nein | Port, Standard `3000` |
 | `NODE_ENV` | nein | `development`, `production` oder `test` |
-| `BASE_URL` | ja | Öffentliche Adresse ohne `/` am Ende, z. B. `https://hub.example.de` |
+| `BASE_URL` | online ja | Öffentliche Adresse, z. B. `https://hub.example.de`. Ein `/` am Ende wird entfernt. Außerhalb von `production` Standard `http://localhost:{PORT}` |
 | `TWITCH_CLIENT_ID` | ja | Client-ID der Twitch-App |
 | `TWITCH_CLIENT_SECRET` | ja | Client-Secret der Twitch-App |
 | `TWITCH_CHANNEL` | ja | Login-Name des Streamers (Kanal) |
@@ -71,10 +73,13 @@ Die Starter-Dateien `src/server.js`, `public/index.html` und `public/style.css` 
 | `DEV_ALWAYS_LIVE` | nein | `true` = Stream gilt immer als live. Nur wirksam, wenn `BASE_URL` mit `http://localhost` oder `http://127.0.0.1` beginnt |
 | `TWITCH_ID_URL` | nein | Standard `https://id.twitch.tv`. **Nur bei `NODE_ENV=test` auswerten**, sonst ignorieren |
 | `TWITCH_API_URL` | nein | Standard `https://api.twitch.tv`. **Nur bei `NODE_ENV=test` auswerten**, sonst ignorieren |
+| `HUB_CONFIG_FILE` | nein | Pfad zu einer anderen Konfigurationsdatei (relativ zum Projektordner). **Nur bei `NODE_ENV=test` auswerten**, sonst immer `hub.config.json` |
 
 - Die App lädt **keine** `.env`-Datei selbst. Lokal macht das `npm run dev` (`--env-file-if-exists=.env`), online setzt Hostinger die Variablen.
 - `DATABASE_URL` leer: außerhalb von `production` wird `file:./data/hub.sqlite` benutzt (Ordner automatisch anlegen). In `production` ist `DATABASE_URL` Pflicht.
-- `DATABASE_URL` mit `file:` am Anfang: der Rest ist der Dateipfad für SQLite.
+- `DATABASE_URL` mit `file:` am Anfang: der Rest ist der Dateipfad für SQLite. Den Rest per String abschneiden, **nicht** mit `new URL()` parsen (Windows-Pfade wie `file:C:/…`).
+- Client-ID und Client-Secret nur auf „nicht leer“ prüfen, nicht auf ein bestimmtes Format.
+- `DEV_ALWAYS_LIVE`: Den Hostnamen von `BASE_URL` mit `new URL()` auslesen. Nur `localhost` und `127.0.0.1` zählen (nicht `localhost.irgendwas.de`).
 
 ### Setup-Modus
 
@@ -82,6 +87,7 @@ Fehlt eine Pflichtvariable oder ist sie ungültig, stürzt die App **nicht** ab.
 
 - `GET /healthz` antwortet `200` mit `ok`.
 - `GET /` zeigt eine freundliche Setup-Seite: welche Variablen fehlen oder ungültig sind (**nur die Namen, niemals Werte**) und ein Hinweis auf `CHECKLISTE.md`.
+- Statische Dateien aus `public/` (z. B. `style.css`) bleiben erreichbar.
 - Alle anderen Routen antworten `503` mit `{ "error": "setup_required" }`.
 - Im Setup-Modus wird keine Verbindung zu Twitch aufgebaut.
 
@@ -92,7 +98,7 @@ Enthält Name, Währung, Bananen-Werte und die Aktionen. Beim Start einlesen und
 ## 4. Datenbank
 
 Knex mit Migrationen, die beim Start automatisch laufen. Dasselbe Schema für SQLite und MySQL.
-Beim SQLite-Client `useNullAsDefault: true` setzen.
+Beim SQLite-Client `useNullAsDefault: true` setzen. Alle Zeitstempel (`created_at`, `expires_at`, `received_at` usw.) als `bigInteger` mit Millisekunden seit 1970 (`Date.now()`), damit SQLite und MySQL gleich funktionieren.
 
 **Datensparsamkeit:** Speichere nur, was unten steht. Keine E-Mail-Adressen, keine Profilbilder, **keine Twitch-Tokens**, keine IP-Adressen.
 
@@ -105,7 +111,7 @@ Beim SQLite-Client `useNullAsDefault: true` setzen.
 | `redemptions` | `id` (auto), `user_id` (FK, on delete cascade), `action_id`, `option` (nullable), `cost`, `created_at` |
 | `app_state` | `key` (Primärschlüssel), `value` |
 
-- `app_state` speichert z. B. `stream_live`, `stream_started_at` und `streamer_authorized` (nur `true`/`false`, kein Token).
+- `app_state` speichert z. B. `stream_live`, `stream_started_at`, `vote_reset_at` und `streamer_authorized` (nur `true`/`false`, kein Token).
 - Einträge in `eventsub_messages`, die älter als 1 Stunde sind, regelmäßig löschen.
 - Alle Datenbankzugriffe über Knex mit Parametern. **Niemals** Werte in SQL-Strings zusammenbauen, auch nicht in `knex.raw`.
 
@@ -119,7 +125,7 @@ Beim SQLite-Client `useNullAsDefault: true` setzen.
    - Weiterleitung (`302`) zu `{TWITCH_ID_URL}/oauth2/authorize` mit `response_type=code`, `client_id`, `redirect_uri={BASE_URL}/auth/callback`, `scope=` (**leer**, Zuschauer geben keine zusätzlichen Rechte) und `state`.
 2. `GET /auth/callback?code=…&state=…`
    - `state` aus der URL muss mit dem Cookie übereinstimmen (Vergleich mit `crypto.timingSafeEqual`). Sonst `403`, keine Session.
-   - Fehlt `code` oder `state`: `400`, keine Session. Hat Twitch `error` zurückgegeben: freundliche Seite, keine Session.
+   - Fehlt `code` oder `state`: `400`, keine Session. Hat Twitch `error` zurückgegeben: `400` mit freundlicher Seite, keine Session. Werte aus der URL (`error`, `error_description`) **niemals** in die Seite übernehmen.
    - State-Cookie sofort löschen (einmal verwendbar).
    - `code` per `POST {TWITCH_ID_URL}/oauth2/token` eintauschen (`application/x-www-form-urlencoded`: `client_id`, `client_secret`, `code`, `grant_type=authorization_code`, `redirect_uri`).
    - Mit dem Token `GET {TWITCH_API_URL}/helix/users` abrufen (Header `Authorization: Bearer …` und `Client-Id`). Daraus `id`, `login`, `display_name`.
@@ -145,6 +151,7 @@ Twitch schickt Follow-Meldungen nur, wenn der Streamer der App einmal das Recht 
 
 - **App-Token:** per `client_credentials` (`POST {TWITCH_ID_URL}/oauth2/token`). Nur im Arbeitsspeicher halten, nie in der DB. Bei Ablauf oder `401` neu holen.
 - **Kanal-ID:** beim Start per `GET {TWITCH_API_URL}/helix/users?login={TWITCH_CHANNEL}` mit App-Token auflösen und im Speicher halten.
+- **Startreihenfolge:** Konfiguration prüfen, Datenbank migrieren, Kanal-ID und Live-Status laden (höchstens 10 Sekunden warten, danach im Hintergrund weiter versuchen) und **erst dann** den Port öffnen.
 - **Live-Status:**
   - Beim Start und danach alle 5 Minuten `GET {TWITCH_API_URL}/helix/streams?user_id={Kanal-ID}` abfragen: Ist `data` nicht leer, ist der Stream live.
   - Webhooks `stream.online` und `stream.offline` aktualisieren den Status sofort.
@@ -163,7 +170,7 @@ Twitch schickt Follow-Meldungen nur, wenn der Streamer der App einmal das Recht 
 - Wurde die `message_id` schon verarbeitet: `204`, nichts weiter tun.
 - Typ `webhook_callback_verification`: `200`, Body = `challenge`, `Content-Type: text/plain`.
 - Typ `revocation`: loggen, `204`.
-- Typ `notification`: Ereignis verarbeiten, dann `204`. Ereignisse, deren `broadcaster_user_id` nicht die Kanal-ID ist, ignorieren (trotzdem `204`).
+- Typ `notification`: Ereignis verarbeiten, dann `204`. Schlägt die Verarbeitung fehl, die `message_id` wieder löschen und `500` antworten, damit Twitch es erneut versucht. Ereignisse, deren `broadcaster_user_id` nicht die Kanal-ID ist, ignorieren (trotzdem `204`).
   - `stream.online` / `stream.offline`: Live-Status setzen.
   - `channel.follow`: siehe 7.
 - Diese Route ist von der Origin-Prüfung (CSRF) ausgenommen. Ihr Schutz ist die Signatur.
@@ -174,6 +181,8 @@ Alle Werte aus `hub.config.json`. Der Server ist die einzige Quelle der Wahrheit
 
 - **Check-in:** einmal pro Kalendertag (Zeitzone `Europe/Berlin`) und nur, wenn der Stream live ist. Bringt `checkinBananas`.
 - **Follow-Bonus:** einmal pro Twitch-Account für immer, auch nach Ent- und Wieder-Folgen. Kommt ein Follow für jemanden, der sich noch nie eingeloggt hat, wird er in `follows` vorgemerkt und beim ersten Login gutgeschrieben.
+- **Abstimmung:** Es zählt die erste Aktion vom Typ `vote` in `hub.config.json`. Der Stand ergibt sich aus ihren Einlösungen seit `app_state.vote_reset_at`. Geht der Stream offline, wird `vote_reset_at` auf jetzt gesetzt.
+- **Daten löschen:** löscht den Benutzer mit Sessions, Einlösungen **und** seinem Eintrag in `follows`. Danach ist keine Twitch-ID dieser Person mehr gespeichert.
 - **Einlösen:** In **einer Transaktion** den Benutzer sperren (`forUpdate`), Cooldown prüfen (letzte Einlösung derselben Aktion durch denselben Benutzer), dann `UPDATE users SET bananas = bananas - cost WHERE id = ? AND bananas >= cost`. Nur wenn genau eine Zeile geändert wurde, die Einlösung speichern. So kann der Kontostand auch bei gleichzeitigen Anfragen nie negativ werden.
 - Die Kosten kommen **immer** aus `hub.config.json`, nie aus der Anfrage.
 
@@ -189,14 +198,14 @@ Alle `POST`-, `PUT`-, `PATCH`- und `DELETE`-Anfragen (außer `/webhooks/twitch`)
 | `GET /api/config` | nein | `200` `{ hubName, currencyName, currencyEmoji, checkinBananas, followBonus, actions: [{ id, type, name, description, cost, cooldownSeconds, options? }] }` |
 | `GET /api/me` | ja | `200` `{ displayName, login, bananas, isLive, checkedInToday }` |
 | `POST /api/checkin` | ja | `200` `{ bananas }`. Nicht live: `409` `not_live`. Schon eingecheckt: `409` `already_checked_in` |
-| `POST /api/redeem` | ja | Body `{ actionId, option? }`. `200` `{ bananas, actionId }`. Unbekannte Aktion, fehlende oder ungültige Option, falsche Felder: `400`. Zu wenig Bananen: `402` `not_enough_bananas`. Cooldown: `429` `cooldown` |
-| `GET /api/leaderboard` | nein | `200` `{ entries: [{ displayName, bananas }] }`, absteigend sortiert, höchstens `leaderboardSize` Einträge |
+| `POST /api/redeem` | ja | Body `{ actionId, option? }`. `200` `{ bananas, actionId }`. Unbekannte Aktion, fehlende oder ungültige Option, falsche Felder: `400`. Zu wenig Bananen: `402` `not_enough_bananas`. Cooldown: `429` `cooldown` mit Header `Retry-After` (Sekunden) |
+| `GET /api/leaderboard` | nein | `200` `{ entries: [{ displayName, bananas }] }`, nur Nutzer mit mehr als 0 Bananen, absteigend nach Bananen, bei Gleichstand nach Name, höchstens `leaderboardSize` Einträge |
 | `GET /api/vote` | nein | `200` `{ actionId, options: [{ option, votes }] }` für die laufende Abstimmung |
 | `POST /api/me/delete` | ja | Benutzer mit allen Daten löschen, Cookie löschen, `200` `{ "ok": true }` |
 
 - Ohne gültige Session: `401` `{ "error": "unauthorized" }`.
 - Eingaben mit zod prüfen, **strikt** (unbekannte Felder → `400`). `actionId` höchstens 50 Zeichen, `option` höchstens 100 Zeichen und muss in `options` der Aktion stehen.
-- `express.json({ limit: '10kb' })`. Kaputtes JSON → `400` `{ "error": "bad_request" }`.
+- `express.json({ limit: '10kb' })`. Fehlercodes: kaputtes JSON `400` `bad_request`, ungültige Felder `400` `invalid_input`, zu groß `413` `payload_too_large`, falscher Content-Type `415` `unsupported_media_type`.
 - Es gibt **keine** Route, mit der man Bananen direkt setzen oder übertragen kann.
 
 ## 9. OBS-Overlay
@@ -231,7 +240,7 @@ Alle `POST`-, `PUT`-, `PATCH`- und `DELETE`-Anfragen (außer `/webhooks/twitch`)
 
 - `helmet` mit Content-Security-Policy:
   `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; media-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`
-- `app.disable('x-powered-by')`. In `production` `app.set('trust proxy', 1)` (Hostinger läuft hinter einem Proxy).
+- `app.disable('x-powered-by')`. Wenn `BASE_URL` mit `https://` beginnt: `app.set('trust proxy', 1)` (Hostinger läuft hinter einem Proxy, sonst teilen sich alle Zuschauer ein Rate-Limit).
 - **Rate-Limits** pro IP (`express-rate-limit`, Antwort `429` mit `{ "error": "rate_limited" }`):
   - `/auth/*`: 30 Anfragen pro 15 Minuten
   - `/api/*`: 300 Anfragen pro Minute
