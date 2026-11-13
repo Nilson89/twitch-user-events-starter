@@ -313,6 +313,17 @@ Ohne Session `401` `unauthorized`, eingeloggt aber nicht Admin `403` `forbidden`
 - Ist der eingeloggte Nutzer der Streamer, steht beim Zuschau-Fortschritt der Hinweis: „Als Streamer bekommst du in deinem eigenen Kanal keine Zuschau-<Währungsname>.“
 - Hinweis sichtbar auf der Seite: „<Währungsname> sind virtuell und haben keinen Geldwert.“
 
+### Layout-Regeln (Startseite und Admin-Seite)
+
+Damit die Seiten auf großen Bildschirmen nicht schmal wirken und Formulare sauber aussehen:
+
+- **Startseite:** Inhalt bis **1180 px** breit. Ab 1000 px Fensterbreite zwei Spalten: links Konto, Aktionen und Abstimmung, rechts die Rangliste (360 px, `position: sticky`). Kopfzeile und Footer gehen über beide Spalten. Darunter eine Spalte.
+- **Aktionskarten:** Raster mit `repeat(auto-fit, minmax(220px, 1fr))`, damit sie die Breite ausfüllen. Karten sind gleich hoch, der „Einlösen“-Button sitzt immer unten (`display: flex; flex-direction: column` + `margin-top: auto`).
+- **Admin-Seite:** Inhalt bis **1000 px** breit, alle Karten untereinander.
+- **Formulare:** Felder in einem festen **2-Spalten-Raster** (`repeat(2, minmax(0, 1fr))`, unter 640 px eine Spalte). Kein `auto-fill` mit vielen schmalen Spalten. Jedes Feld: Label (einzeilig, `white-space: nowrap`, zu lange Labels mit `…`), darunter das Eingabefeld, darunter optional Hinweis und Fehlertext **ohne** Außenabstand. Felder einer Zeile beginnen damit auf derselben Höhe.
+- **Alle Eingabefelder** (`input`, `select`) sind gleich hoch (44 px) und füllen ihre Spalte (`width: 100%`). Zahlenfelder ohne Pfeil-Buttons (`appearance: textfield`). Schrift wie der Rest der Seite (`font: inherit`).
+- Grid- und Flex-Kinder bekommen `min-width: 0`, damit lange Texte (z. B. die Overlay-URL) nichts aus dem Bild schieben. Keine waagerechte Scrollleiste, auch nicht auf dem Handy.
+
 ### Admin-Seite (`views/admin.html`, `public/admin.js`, `public/admin.css`)
 
 Gleiches Design wie die Startseite, übersichtlich in Karten:
