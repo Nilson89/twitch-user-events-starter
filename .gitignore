@@ -1,0 +1,18 @@
+# Geheimnisse: niemals auf GitHub hochladen
+.env
+.env.*
+!.env.example
+
+# Lokale Datenbank
+data/
+*.sqlite
+*.sqlite-*
+
+# Abhängigkeiten und Systemdateien
+node_modules/
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Lokale Claude-Code-Einstellungen
+.claude/settings.local.json

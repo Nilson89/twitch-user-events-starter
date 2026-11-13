@@ -1,0 +1,30 @@
+{
+  "name": "twitch-user-events-starter",
+  "version": "1.0.0",
+  "description": "Starter für deinen eigenen Twitch-Zuschauer-Hub: Zuschauer loggen sich mit Twitch ein, sammeln Bananen und lösen Aktionen im Stream aus. Gebaut mit Claude Code.",
+  "private": true,
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --env-file-if-exists=.env --watch src/server.js",
+    "setup": "node scripts/setup.js",
+    "hackertest": "node --test --test-reporter=./tests/reporter.js tests/hackertest.test.js",
+    "test": "npm run hackertest"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "express": "^5.3.0",
+    "express-rate-limit": "^8.7.4",
+    "helmet": "^8.3.0",
+    "knex": "^3.3.0",
+    "mysql2": "^3.24.6",
+    "zod": "^4.6.7"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^13.1.1"
+  }
+}
