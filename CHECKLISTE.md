@@ -40,7 +40,7 @@ Ab jetzt deployt Hostinger bei jedem `git push` automatisch neu.
 
 - [ ] Dein Repo auf den PC klonen (z. B. mit GitHub Desktop oder `git clone`)
 - [ ] Im Ordner ein Terminal öffnen: `npm install`
-- [ ] `npm run setup` ausführen. Fragt nach Kanalname, Client-ID und Secret und legt die `.env` an.
+- [ ] `npm run setup` ausführen. Fragt nach Kanalname, Client-ID, Secret und deiner eigenen Währung (z. B. Kekse 🍪) und legt die `.env` an.
 - [ ] Claude Code im Ordner starten: `claude`
 - [ ] Eintippen: **`/hub-bauen`**
 - [ ] Warten, bis Claude fertig ist und der Hackertest grün ist
@@ -48,9 +48,11 @@ Ab jetzt deployt Hostinger bei jedem `git push` automatisch neu.
 ## 4. Lokal testen
 
 - [ ] `npm run dev`
-- [ ] http://localhost:3000 öffnen → **Mit Twitch anmelden**
+- [ ] **Genau** http://localhost:3000 öffnen (nicht `127.0.0.1`, sonst klappt der Login nicht) → **Mit Twitch anmelden**
 - [ ] Check-in machen, eine Aktion einlösen
-- [ ] Overlay testen: `http://localhost:3000/overlay?key=DEIN_OVERLAY_KEY` (Wert steht in der `.env`)
+- [ ] Admin-Seite öffnen: http://localhost:3000/admin (mit deinem Streamer-Account) und **Kanal verbinden**. Erst danach gibt es Zuschau-Bananen.
+- [ ] Gut zu wissen: Den Follow-Bonus kann Twitch lokal nicht zustellen (Twitch erreicht deinen PC nicht). Der funktioniert erst online.
+- [ ] Overlay testen: Overlay-URL von der Admin-Seite in einem zweiten Tab öffnen
 
 ## 5. Online stellen
 
@@ -65,18 +67,29 @@ Ab jetzt deployt Hostinger bei jedem `git push` automatisch neu.
 
 > Hinweis: Wenn Claude die Umgebungsvariablen später noch einmal per MCP setzt, werden alle Variablen ersetzt. Trag `TWITCH_CLIENT_SECRET` danach erneut im hPanel ein.
 
-## 6. Follow-Bonus freischalten (einmalig)
+## 6. Kanal verbinden und einstellen (einmalig)
 
-- [ ] Als Streamer eingeloggt bei Twitch `https://DEINE-DOMAIN/auth/streamer` öffnen und bestätigen
-- [ ] Damit darf die App Follow-Meldungen empfangen. Es wird kein Token gespeichert.
+- [ ] `https://DEINE-DOMAIN/admin` öffnen und mit deinem Streamer-Account bei Twitch bestätigen
+- [ ] Damit darf die App Follow-Meldungen empfangen und sehen, wer im Chat ist (für die Zuschau-Bananen). Dein Token wird nur verschlüsselt gespeichert und du kannst die Verbindung jederzeit auf der Admin-Seite entfernen.
+- [ ] Auf der Admin-Seite Bananen-Werte, Zuschau-Intervall und Aktionen nach deinem Geschmack einstellen
 
-## 7. Ab in den Stream
+## 7. Eigene Währung mit eigenem Bild (optional)
 
-- [ ] In OBS: **Quelle hinzufügen → Browser**, URL: `https://DEINE-DOMAIN/overlay?key=DEIN_OVERLAY_KEY`, Größe 1920 × 1080
+- [ ] Bild deiner Währung als PNG vorbereiten (quadratisch, z. B. 128 × 128 Pixel, transparenter Hintergrund)
+- [ ] Bild in den Ordner `public/waehrung/` legen (Dateiname nur mit Buchstaben, Zahlen, `-` oder `_`, z. B. `keks.png`)
+- [ ] `git add . && git commit -m "Eigene Währung" && git push`
+- [ ] Auf der Admin-Seite unter **Deine Währung** das Bild auswählen, Name und Emoji anpassen, **Speichern**
+- [ ] Fertig: Zähler, Rangliste, Kosten und der Regen im Overlay nutzen jetzt dein Bild
+
+## 8. Ab in den Stream
+
+- [ ] Auf der Admin-Seite in der Karte **OBS einrichten** die Overlay-URL kopieren
+- [ ] In OBS: bei **Quellen** auf **+** → **Browser**, URL einfügen, Breite **1920**, Höhe **1080**
+- [ ] Auf der Admin-Seite **Overlay testen** klicken: In OBS erscheint eine Test-Animation
 - [ ] Overlay-URL wie ein Passwort behandeln: nicht zeigen, nicht teilen
 - [ ] Link zum Hub in Chat-Befehl, Panel oder Beschreibung packen
 
-## 8. Rechtliches (Deutschland)
+## 9. Rechtliches (Deutschland)
 
 - [ ] `public/impressum.html` ausfüllen
 - [ ] `public/datenschutz.html` prüfen und ausfüllen

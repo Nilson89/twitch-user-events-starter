@@ -2,11 +2,13 @@
 
 Bau dir deinen eigenen **Twitch-Zuschauer-Hub**, ohne selbst Code zu schreiben.
 
-Deine Zuschauer melden sich mit Twitch an, sammeln während deines Streams Bananen und lösen damit Aktionen in deinem Stream aus: Sounds, einen Bananenregen oder eine Abstimmung über das nächste Spiel. Dazu gibt es eine Rangliste und ein Overlay für OBS.
+Deine Zuschauer melden sich mit Twitch an, sammeln während deines Streams Bananen (fürs Zuschauen, per täglichem Check-in und für den Follow) und lösen damit Aktionen in deinem Stream aus: Sounds, einen Bananenregen oder eine Abstimmung über das nächste Spiel. Dazu gibt es eine Rangliste, ein Overlay für OBS und eine Admin-Seite, auf der du alle Werte und Aktionen einstellst.
 
 Den Code schreibt [Claude Code](https://claude.com/claude-code). Dieses Repo enthält alles, was Claude dafür braucht: einen genauen Bauplan, Sicherheitsregeln und einen Hackertest, der die fertige App angreift.
 
-> Bananen sind rein virtuell und haben keinen Geldwert. Es gibt keine Kauf-, Verkaufs- oder Auszahlungsfunktion.
+> **Bananen sind nur das Beispiel.** Du kannst deine eigene Währung mit eigenem Namen, Emoji und Bild verwenden, zum Beispiel Kekse 🍪, Coins oder dein Kanal-Maskottchen. Wie das geht, steht in der [CHECKLISTE.md](CHECKLISTE.md) unter „Eigene Währung“.
+
+> Die Währung ist rein virtuell und hat keinen Geldwert. Es gibt keine Kauf-, Verkaufs- oder Auszahlungsfunktion.
 
 ## So funktioniert's
 
@@ -28,7 +30,7 @@ Die ausführliche Schritt-für-Schritt-Anleitung steht in **[CHECKLISTE.md](CHEC
 | [`SPEC.md`](SPEC.md) | Der Bauplan: was die App kann und wie sie gebaut wird |
 | [`SECURITY.md`](SECURITY.md) | Sicherheitsregeln, an die sich Claude bei jeder Änderung hält |
 | [`CLAUDE.md`](CLAUDE.md) | Wird von Claude Code automatisch gelesen und bindet `SECURITY.md` ein |
-| [`hub.config.json`](hub.config.json) | Deine Einstellungen: Aktionen, Kosten, Cooldowns, Bananen pro Check-in |
+| [`hub.config.json`](hub.config.json) | Startwerte für Aktionen und Bananen. Danach stellst du alles auf der Admin-Seite `/admin` ein |
 | [`PROMPTS.md`](PROMPTS.md) | Alle Prompts aus dem Video zum Kopieren |
 | [`CHECKLISTE.md`](CHECKLISTE.md) | Schritt für Schritt vom Starter zum Live-Hub |
 | `tests/` | Der Hackertest |
@@ -38,7 +40,8 @@ Die ausführliche Schritt-für-Schritt-Anleitung steht in **[CHECKLISTE.md](CHEC
 
 Vibe Coding liefert schnell Code, der funktioniert. Ob er auch sicher ist, prüft dieses Repo gleich mit:
 
-- **Keine Twitch-Tokens gespeichert:** Nach dem Login wird das Token sofort bei Twitch widerrufen. In der Datenbank steht nichts, was man klauen könnte.
+- **Keine Zuschauer-Tokens gespeichert:** Nach dem Login wird das Token sofort bei Twitch widerrufen.
+- **Dein Streamer-Token nur verschlüsselt:** Für Zuschau-Bananen und Follows speichert die App genau ein Token, deins, mit AES-256 verschlüsselt. Du kannst es jederzeit auf der Admin-Seite entfernen.
 - **Keine unnötigen Rechte:** Zuschauer geben beim Login keine zusätzlichen Rechte an ihrem Account frei.
 - **Geprüfte Webhooks:** Jede Nachricht von Twitch wird über ihre Signatur geprüft. Gefälschte, alte und doppelte Nachrichten fliegen raus.
 - **Der Server entscheidet:** Kontostand, Kosten und Cooldowns liegen nur auf dem Server.

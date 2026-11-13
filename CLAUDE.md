@@ -1,6 +1,6 @@
 # Twitch-Zuschauer-Hub
 
-Eine Website für eine Twitch-Community: Login mit Twitch, Bananen sammeln, Aktionen im Stream auslösen, Rangliste und OBS-Overlay.
+Eine Website für eine Twitch-Community: Login mit Twitch, Bananen sammeln (Check-in, Follow, Zuschauen), Aktionen im Stream auslösen, Rangliste, OBS-Overlay und eine Admin-Seite für den Streamer.
 Der Bauplan steht in `SPEC.md`. Die Sicherheitsregeln stehen in `SECURITY.md` und gelten immer:
 
 @SECURITY.md
@@ -13,7 +13,7 @@ Der Nutzer ist meist Streamer und kein Programmierer. Erkläre in einfachem Deut
 
 - Lies und bearbeite **nie** die Datei `.env`. Wenn eine Variable fehlt, nenne ihren Namen und verweise auf `npm run setup` oder `CHECKLISTE.md`.
 - Verändere **nie** etwas in `tests/`. Wenn der Hackertest rot ist, ist der App-Code falsch.
-- `hub.config.json` gehört dem Streamer. Lies sie, aber ändere sie nur, wenn er es ausdrücklich möchte.
+- `hub.config.json` enthält nur die Startwerte und gehört dem Streamer. Lies sie, aber ändere sie nur, wenn er es ausdrücklich möchte. Im laufenden Betrieb stellt er alles auf der Admin-Seite `/admin` ein.
 - Installiere keine Pakete, die nicht schon in `package.json` stehen, ohne vorher zu fragen.
 - Nach jeder Änderung am Code: `npm run hackertest` ausführen.
 
@@ -34,7 +34,8 @@ Die App läuft auf Hostinger als Node.js-Web-App, verbunden mit GitHub. Jeder `g
 Online braucht sie die Umgebungsvariablen aus `SPEC.md` Abschnitt 3, mit `NODE_ENV=production`, `BASE_URL=https://…` und einer MySQL-`DATABASE_URL`.
 
 Wenn du die Variablen über das Hostinger MCP setzt:
-- Erzeuge `EVENTSUB_SECRET` und `OVERLAY_KEY` neu mit `crypto.randomBytes` (nicht die lokalen Werte verwenden).
+- Erzeuge `EVENTSUB_SECRET`, `OVERLAY_KEY` und `TOKEN_ENCRYPTION_KEY` (64 Hex-Zeichen) neu mit `crypto.randomBytes` (nicht die lokalen Werte verwenden).
+- `TOKEN_ENCRYPTION_KEY` später nicht mehr ändern. Sonst kann die App das gespeicherte Streamer-Token nicht mehr lesen und der Streamer muss seinen Kanal unter `/admin` neu verbinden.
 - `TWITCH_CLIENT_SECRET` setzt du **nicht**. Der Nutzer trägt es danach selbst im hPanel ein, damit es nie im Chat landet. Sag ihm das am Ende ausdrücklich.
-- Nenne dem Nutzer am Ende die fertige Overlay-URL für OBS.
+- Sag dem Nutzer am Ende, dass er die Overlay-URL für OBS auf der Admin-Seite `/admin` findet, nachdem er dort seinen Kanal verbunden hat.
 - Das Setzen der Variablen per MCP ersetzt alle bestehenden Variablen. Wenn du sie später noch einmal setzt, erinnere den Nutzer daran, `TWITCH_CLIENT_SECRET` danach erneut im hPanel einzutragen.

@@ -13,6 +13,10 @@ export async function startFakeTwitch({ clientId, clientSecret, channel }) {
     users: new Map(), // twitch id -> user
     codes: new Map(), // code -> { user, scope, redirectUri }
     userTokens: new Map(), // access token -> user
+    tokenScopes: new Map(), // access token -> scope string
+    refreshTokens: new Map(), // refresh token -> { user, scope }
+    chatters: [], // Nutzer, die gerade im Chat sind
+    chattersCalls: 0,
     issued: [], // alle ausgegebenen Tokens (für Leak-Prüfungen)
     issuedCodes: [],
     revoked: new Set(),
@@ -86,6 +90,27 @@ export async function startFakeTwitch({ clientId, clientSecret, channel }) {
         const refresh = rand('fakerefresh');
         state.issued.push(access, refresh);
         state.userTokens.set(access, entry.user);
+        state.tokenScopes.set(access, entry.scope || '');
+        state.refreshTokens.set(refresh, { user: entry.user, scope: entry.scope || '' });
+        return send(res, 200, {
+          access_token: access,
+          refresh_token: refresh,
+          expires_in: 14000,
+          scope: entry.scope ? entry.scope.split(' ') : [],
+          token_type: 'bearer',
+        });
+      }
+      if (grant === 'refresh_token') {
+        const old = params.get('refresh_token');
+        const entry = state.refreshTokens.get(old);
+        if (!entry || state.revoked.has(old)) return send(res, 400, { status: 400, message: 'Invalid refresh token' });
+        state.refreshTokens.delete(old); // Twitch kann Refresh-Tokens erneuern
+        const access = rand('fakeuser');
+        const refresh = rand('fakerefresh');
+        state.issued.push(access, refresh);
+        state.userTokens.set(access, entry.user);
+        state.tokenScopes.set(access, entry.scope);
+        state.refreshTokens.set(refresh, entry);
         return send(res, 200, {
           access_token: access,
           refresh_token: refresh,
@@ -110,7 +135,12 @@ export async function startFakeTwitch({ clientId, clientSecret, channel }) {
     if (url.pathname === '/oauth2/revoke' && req.method === 'POST') {
       const t = params.get('token');
       if (params.get('client_id') !== state.clientId) return send(res, 400, { status: 400, message: 'Invalid client' });
-      if (t) state.revoked.add(t);
+      if (t) {
+        state.revoked.add(t);
+        const user = state.userTokens.get(t);
+        // Widerruf eines Access-Tokens macht auch die zugehörigen Refresh-Tokens ungültig.
+        if (user) for (const [r, e] of state.refreshTokens) if (e.user.id === user.id) state.revoked.add(r);
+      }
       res.writeHead(200);
       return res.end();
     }
@@ -154,6 +184,18 @@ export async function startFakeTwitch({ clientId, clientSecret, channel }) {
         }
         if (!tokenUser) return send(res, 401, { error: 'Unauthorized', status: 401, message: 'Missing User OAUTH Token' });
         return send(res, 200, { data: [toHelixUser(tokenUser)] });
+      }
+
+      if (url.pathname === '/helix/chat/chatters') {
+        state.chattersCalls += 1;
+        if (!tokenUser) return send(res, 401, { error: 'Unauthorized', status: 401, message: 'Missing User OAUTH Token' });
+        const scopes = (state.tokenScopes.get(t) || '').split(' ');
+        if (!scopes.includes('moderator:read:chatters')) return send(res, 401, { error: 'Unauthorized', status: 401, message: 'Missing scope: moderator:read:chatters' });
+        if (url.searchParams.get('broadcaster_id') !== state.channelUser.id || url.searchParams.get('moderator_id') !== tokenUser.id || tokenUser.id !== state.channelUser.id) {
+          return send(res, 403, { error: 'Forbidden', status: 403, message: 'The user in moderator_id must be the broadcaster or a moderator' });
+        }
+        const data = state.chatters.map((u) => ({ user_id: u.id, user_login: u.login, user_name: u.display_name }));
+        return send(res, 200, { data, pagination: {}, total: data.length });
       }
 
       if (url.pathname === '/helix/streams') {

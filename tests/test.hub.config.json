@@ -2,8 +2,11 @@
   "hubName": "Zuschauer-Hub",
   "currencyName": "Bananen",
   "currencyEmoji": "🍌",
+  "currencyImage": null,
   "checkinBananas": 25,
   "followBonus": 100,
+  "watchBananas": 7,
+  "watchIntervalMinutes": 1,
   "leaderboardSize": 10,
   "actions": [
     {
@@ -29,7 +32,11 @@
       "description": "Gib deine Stimme für das nächste Spiel ab.",
       "cost": 10,
       "cooldownSeconds": 0,
-      "options": ["Minecraft", "Mario Kart", "Fortnite"]
+      "options": [
+        "Minecraft",
+        "Mario Kart",
+        "Fortnite"
+      ]
     }
   ]
 }

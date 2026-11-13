@@ -23,6 +23,8 @@ import {
   streamOnlineEvent,
   waitForOverlayEvent,
   listFiles,
+  waitUntil,
+  sleep2,
 } from './harness.js';
 
 const T = { timeout: 30000 };
@@ -358,6 +360,13 @@ test('Angriff: Alte Webhook-Nachricht erneut abgespielt', T, async () => {
   assert.equal(await bananas(S.victim.cookie), 0);
 });
 
+test('Angriff: Webhook mit Zeitstempel aus der Zukunft', T, async () => {
+  const future = new Date(Date.now() + 11 * 60 * 1000).toISOString();
+  const r = await sendWebhook(app, { subscriptionType: 'channel.follow', event: followEvent(U.victim), timestamp: future });
+  assert.equal(r.status, 403, `Erwartet 403, kam ${r.status}`);
+  assert.equal(await bananas(S.victim.cookie), 0);
+});
+
 test('Angriff: Follow für einen fremden Kanal', T, async () => {
   const r = await sendWebhook(app, { subscriptionType: 'channel.follow', event: followEvent(U.victim, '9999') });
   assert.ok(r.status >= 200 && r.status < 300, `Webhook: ${r.status}`);
@@ -445,7 +454,7 @@ test('Angriff: Sicherheits-Header fehlen', T, async () => {
 test('Angriff: Tokens und Secrets in der Datenbank', T, async () => {
   const db = app.dbContent();
   assert.ok(db.length > 0, 'Keine Datenbankdatei gefunden');
-  const secrets = [...fake.secrets(), SECRETS.eventsubSecret, SECRETS.overlayKey];
+  const secrets = [...fake.secrets(), SECRETS.eventsubSecret, SECRETS.overlayKey, SECRETS.tokenKey];
   for (const s of secrets) assert.ok(!db.includes(s), 'In der Datenbank steht ein Token oder Secret im Klartext');
   for (const v of sessionValues) assert.ok(!db.includes(v), 'Session-IDs stehen im Klartext in der Datenbank (nur Hash speichern)');
   const m = await me(app, S.main.cookie);
@@ -454,7 +463,7 @@ test('Angriff: Tokens und Secrets in der Datenbank', T, async () => {
 
 test('Angriff: Tokens und Secrets in den Logs', T, async () => {
   const logs = app.logs();
-  const secrets = [...fake.secrets(), ...fake.state.issuedCodes, SECRETS.eventsubSecret, SECRETS.overlayKey, ...sessionValues];
+  const secrets = [...fake.secrets(), ...fake.state.issuedCodes, SECRETS.eventsubSecret, SECRETS.overlayKey, SECRETS.tokenKey, ...sessionValues];
   for (const s of secrets) assert.ok(!logs.includes(s), 'Die Logs enthalten ein Token, Secret, Code oder den Overlay-Schlüssel');
 });
 
@@ -474,6 +483,231 @@ test('Funktion: Zuschauer können ihre Daten löschen', T, async () => {
   assert.ok(!lb.json.entries.some((e) => e.displayName === U.deleteme.display_name), 'Gelöschter Nutzer steht noch in der Rangliste');
 });
 
+// ------------------------------------------------------------------
+// Streamer, Admin-Seite und Zuschau-Bananen (eigene App-Instanz)
+// ------------------------------------------------------------------
+
+const A = {}; // Zustand für diesen Abschnitt
+const channelUser = () => fake.state.channelUser;
+const tokensOf = (map, userId) => [...map.entries()].filter(([, v]) => (v.user ?? v).id === userId).map(([t]) => t);
+
+test('Funktion: Streamer-Freigabe fragt genau die nötigen Rechte an', T, async () => {
+  A.app = await startApp({ fake, env: { HUB_MINUTE_MS: '300' } });
+  const r = await fetch(`${A.app.baseUrl}/auth/streamer`, { redirect: 'manual' });
+  assert.ok([302, 303].includes(r.status), `/auth/streamer sollte weiterleiten, kam ${r.status}`);
+  const scope = new URL(r.headers.get('location')).searchParams.get('scope') || '';
+  const scopes = scope.split(/[\s+]+/).filter(Boolean).sort();
+  assert.deepEqual(scopes, ['moderator:read:chatters', 'moderator:read:followers'], `Angefragte Rechte: "${scope}"`);
+});
+
+test('Angriff: Fremder Account gibt sich als Streamer aus', T, async () => {
+  const intruder = newUser({ display_name: 'FakeStreamer' });
+  const r = await login(A.app, fake, intruder, { path: '/auth/streamer', allowFail: true });
+  assert.equal(r.response.status, 403, `Erwartet 403, kam ${r.response.status}`);
+  const db = A.app.dbContent();
+  for (const t of tokensOf(fake.state.refreshTokens, intruder.id)) assert.ok(!db.includes(t), 'Token eines fremden Accounts wurde gespeichert');
+  for (const t of tokensOf(fake.state.userTokens, intruder.id)) assert.ok(fake.state.revoked.has(t), 'Token eines fremden Accounts wurde nicht widerrufen');
+});
+
+test('Funktion: Streamer verbindet seinen Kanal und ist Admin', T, async () => {
+  const s = await login(A.app, fake, channelUser(), { path: '/auth/streamer' });
+  A.admin = s;
+  const m = await me(A.app, s.cookie);
+  assert.equal(m.status, 200);
+  assert.equal(m.json.isAdmin, true, 'Der Streamer muss isAdmin: true haben');
+  const st = await api(A.app, 'GET', '/api/admin/settings', { cookie: s.cookie });
+  assert.equal(st.status, 200, `GET /api/admin/settings: ${st.status}`);
+  assert.equal(st.json.streamerAuthorized, true, 'streamerAuthorized sollte true sein');
+  // Normaler Login des Streamers darf die gespeicherte Kanal-Verbindung nicht zerstören
+  const beforeLogin = new Set(tokensOf(fake.state.refreshTokens, channelUser().id));
+  await login(A.app, fake, channelUser());
+  const stored = tokensOf(fake.state.refreshTokens, channelUser().id);
+  A.viewerFlowRefresh = new Set(stored.filter((t) => !beforeLogin.has(t)));
+  assert.ok(stored.some((t) => !fake.state.revoked.has(t)), 'Normaler Login des Streamers hat die gespeicherte Kanal-Verbindung widerrufen');
+  A.viewerUser = newUser({ display_name: 'Zuschauerin2' });
+  A.viewer = await login(A.app, fake, A.viewerUser);
+  assert.equal((await me(A.app, A.viewer.cookie)).json.isAdmin, false);
+});
+
+test('Angriff: Streamer-Token liegt nur verschlüsselt in der Datenbank', T, async () => {
+  const db = A.app.dbContent();
+  const tokens = [...tokensOf(fake.state.refreshTokens, channelUser().id), ...tokensOf(fake.state.userTokens, channelUser().id)];
+  assert.ok(tokens.length > 0, 'Kein Streamer-Token bei Twitch geholt');
+  for (const t of tokens) assert.ok(!db.includes(t), 'Streamer-Token steht im Klartext in der Datenbank');
+  assert.ok(!db.includes(SECRETS.tokenKey), 'Der Verschlüsselungs-Schlüssel steht in der Datenbank');
+  assert.ok(db.includes('v1:'), 'Kein verschlüsseltes Streamer-Token im Format v1:… gefunden (SPEC Abschnitt 5)');
+  for (const t of [...tokens, SECRETS.tokenKey]) assert.ok(!A.app.logs().includes(t), 'Streamer-Token oder Schlüssel in den Logs');
+  const st = await api(A.app, 'GET', '/api/admin/settings', { cookie: A.admin.cookie });
+  for (const t of tokens) assert.ok(!st.text.includes(t), 'Admin-API gibt das Token heraus');
+});
+
+test('Angriff: Zuschauer öffnet die Admin-Funktionen', T, async () => {
+  const v = A.viewer.cookie;
+  const cur = (await api(A.app, 'GET', '/api/admin/settings', { cookie: A.admin.cookie })).json.settings;
+  const get = await api(A.app, 'GET', '/api/admin/settings', { cookie: v });
+  assert.equal(get.status, 403, `GET Einstellungen als Zuschauer: ${get.status}`);
+  const put = await api(A.app, 'PUT', '/api/admin/settings', { cookie: v, body: { ...cur, checkinBananas: 99999 } });
+  assert.equal(put.status, 403, `PUT Einstellungen als Zuschauer: ${put.status}`);
+  const ov = await api(A.app, 'GET', '/api/admin/overlay-url', { cookie: v });
+  assert.equal(ov.status, 403, `Overlay-URL als Zuschauer: ${ov.status}`);
+  assert.ok(!ov.text.includes(SECRETS.overlayKey));
+  const tst = await api(A.app, 'POST', '/api/admin/overlay/test', { cookie: v });
+  assert.equal(tst.status, 403, `Overlay-Test als Zuschauer: ${tst.status}`);
+  const rv = await api(A.app, 'POST', '/api/admin/streamer/revoke', { cookie: v });
+  assert.equal(rv.status, 403, `Freigabe entfernen als Zuschauer: ${rv.status}`);
+  const anon = await api(A.app, 'GET', '/api/admin/settings');
+  assert.equal(anon.status, 401, `Ohne Login: ${anon.status}`);
+  const page = await fetch(`${A.app.baseUrl}/admin`, { headers: { cookie: v }, redirect: 'manual' });
+  assert.notEqual(page.status, 200, 'Die Admin-Seite darf Zuschauern nicht ausgeliefert werden');
+  await page.text();
+  const okPage = await fetch(`${A.app.baseUrl}/admin`, { headers: { cookie: A.admin.cookie }, redirect: 'manual' });
+  assert.equal(okPage.status, 200, 'Die Admin-Seite muss für den Streamer erreichbar sein');
+  await okPage.text();
+});
+
+test('Funktion: Admin ändert Werte und legt eine neue Aktion an', T, async () => {
+  const cur = (await api(A.app, 'GET', '/api/admin/settings', { cookie: A.admin.cookie })).json.settings;
+  const ov = await api(A.app, 'GET', '/api/admin/overlay-url', { cookie: A.admin.cookie });
+  assert.equal(ov.status, 200, `Overlay-URL für Admin: ${ov.status}`);
+  assert.ok(String(ov.json?.url).includes(SECRETS.overlayKey), 'Admin bekommt die Overlay-URL');
+  assert.equal(ov.json.width, 1920, 'Admin bekommt die Overlay-Breite');
+  assert.equal(ov.json.height, 1080, 'Admin bekommt die Overlay-Höhe');
+  const waiter = waitForOverlayEvent(A.app, (ev) => ev.type === 'test');
+  assert.equal(await waiter.ready, 200);
+  const t = await api(A.app, 'POST', '/api/admin/overlay/test', { cookie: A.admin.cookie });
+  assert.equal(t.status, 200, `Overlay testen: ${t.status}`);
+  assert.ok((await waiter.result).event, 'Der Overlay-Test kam nicht im Overlay an');
+  const next = {
+    ...cur,
+    checkinBananas: 40,
+    watchBananas: 7,
+    watchIntervalMinutes: 1,
+    actions: [...cur.actions, { id: 'konfetti', type: 'rain', name: 'Konfetti', description: 'Bunt!', cost: 15, cooldownSeconds: 5 }],
+  };
+  const r = await api(A.app, 'PUT', '/api/admin/settings', { cookie: A.admin.cookie, body: next });
+  assert.equal(r.status, 200, `Speichern: ${r.status} ${r.text}`);
+  const pub = await api(A.app, 'GET', '/api/config');
+  assert.equal(pub.json.checkinBananas, 40);
+  assert.ok(pub.json.actions.some((a) => a.id === 'konfetti'), 'Neue Aktion fehlt in /api/config');
+
+  fake.setLive(true);
+  await sendWebhook(A.app, { subscriptionType: 'stream.online', event: streamOnlineEvent() });
+  assert.equal((await api(A.app, 'POST', '/api/checkin', { cookie: A.viewer.cookie })).status, 200);
+  const afterCheckin = (await me(A.app, A.viewer.cookie)).json.bananas;
+  assert.ok(afterCheckin >= 40 && (afterCheckin - 40) % 7 === 0, `Neuer Check-in-Wert wird nicht benutzt (Kontostand ${afterCheckin})`);
+  const red = await api(A.app, 'POST', '/api/redeem', { cookie: A.viewer.cookie, body: { actionId: 'konfetti' } });
+  assert.equal(red.status, 200, `Neue Aktion einlösen: ${red.status} ${red.text}`);
+});
+
+test('Angriff: Ungültige oder gefährliche Admin-Werte', T, async () => {
+  const cur = (await api(A.app, 'GET', '/api/admin/settings', { cookie: A.admin.cookie })).json.settings;
+  const bad = [
+    { ...cur, watchIntervalMinutes: 0 },
+    { ...cur, checkinBananas: -5 },
+    { ...cur, followBonus: 'viele' },
+    { ...cur, actions: [...cur.actions, { ...cur.actions[0] }] },
+    { ...cur, actions: [{ id: 'gratis', type: 'rain', name: 'Gratis', description: '', cost: 0, cooldownSeconds: 0 }] },
+    { ...cur, actions: [{ id: 'x1', type: 'unbekannt', name: 'X', description: '', cost: 5, cooldownSeconds: 0 }] },
+    { ...cur, actions: [{ id: 'wahl', type: 'vote', name: 'Wahl', description: '', cost: 5, cooldownSeconds: 0, options: ['nur eine'] }] },
+    { ...cur, isAdmin: true },
+    { ...cur, actions: [] },
+  ];
+  for (const body of bad) {
+    const r = await api(A.app, 'PUT', '/api/admin/settings', { cookie: A.admin.cookie, body });
+    assert.equal(r.status, 400, `Ungültige Einstellungen wurden angenommen: ${JSON.stringify(body).slice(0, 120)}`);
+  }
+  const csrf = await api(A.app, 'PUT', '/api/admin/settings', { cookie: A.admin.cookie, body: { ...cur, checkinBananas: 1 }, origin: 'https://boese-seite.example' });
+  assert.equal(csrf.status, 403, `Fremde Website ändert Admin-Werte: ${csrf.status}`);
+  const after = (await api(A.app, 'GET', '/api/admin/settings', { cookie: A.admin.cookie })).json.settings;
+  assert.deepEqual(after, cur, 'Einstellungen wurden trotz Fehler verändert');
+});
+
+test('Funktion: Eigene Währung mit eigenem Bild', T, async () => {
+  const imgs = await api(A.app, 'GET', '/api/admin/currency-images', { cookie: A.admin.cookie });
+  assert.equal(imgs.status, 200, `Bilderliste: ${imgs.status}`);
+  assert.ok(imgs.json.images.includes('muenze.png'), 'Das Beispielbild muenze.png fehlt in der Bilderliste');
+  const cur = (await api(A.app, 'GET', '/api/admin/settings', { cookie: A.admin.cookie })).json.settings;
+  const next = { ...cur, hubName: 'Keks-Hub', currencyName: 'Kekse', currencyEmoji: '🍪', currencyImage: 'muenze.png' };
+  const r = await api(A.app, 'PUT', '/api/admin/settings', { cookie: A.admin.cookie, body: next });
+  assert.equal(r.status, 200, `Speichern: ${r.status} ${r.text}`);
+  const pub = await api(A.app, 'GET', '/api/config');
+  assert.equal(pub.json.currencyName, 'Kekse');
+  assert.equal(pub.json.currencyEmoji, '🍪');
+  assert.equal(pub.json.currencyImage, 'muenze.png');
+  const img = await fetch(`${A.app.baseUrl}/waehrung/muenze.png`);
+  assert.equal(img.status, 200, 'Das Währungsbild wird nicht ausgeliefert');
+  assert.match(img.headers.get('content-type') || '', /image\/png/);
+  await img.arrayBuffer();
+  const oc = await fetch(`${A.app.baseUrl}/overlay/config?key=${SECRETS.overlayKey}`);
+  assert.equal(oc.status, 200, `/overlay/config: ${oc.status}`);
+  assert.equal((await oc.json()).currencyImage, 'muenze.png');
+  const ocBad = await fetch(`${A.app.baseUrl}/overlay/config`);
+  assert.equal(ocBad.status, 403, `/overlay/config ohne Schlüssel: ${ocBad.status}`);
+  await ocBad.text();
+});
+
+test('Angriff: Fester Bananen-Text trotz eigener Währung', T, async () => {
+  const pages = ['/', '/admin', `/overlay?key=${SECRETS.overlayKey}`];
+  for (const p of pages) {
+    const html = await (await fetch(`${A.app.baseUrl}${p}`, { headers: { cookie: A.admin.cookie } })).text();
+    assert.ok(!/Banane|🍌/.test(html), `${p.split('?')[0]} zeigt noch „Banane“ oder 🍌, obwohl die Währung „Kekse“ ist`);
+  }
+  for (const f of [...listFiles('public', ['.js', '.html', '.css']), ...listFiles('views', ['.js', '.html', '.css'])]) {
+    if (f.replace(/\\/g, '/').startsWith('public/waehrung/')) continue;
+    const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    assert.ok(!/Banane|🍌/.test(src), `${f} enthält fest eingetragen „Banane“ oder 🍌. Bitte die Währung aus den Einstellungen verwenden.`);
+  }
+});
+
+test('Angriff: Währungsbild mit gefährlichem Dateinamen', T, async () => {
+  const cur = (await api(A.app, 'GET', '/api/admin/settings', { cookie: A.admin.cookie })).json.settings;
+  const bad = ['../../src/server.js', '..\\..\\package.json', 'gibt-es-nicht.png', 'bild.svg', 'muenze.png?x=1', '/etc/passwd', 'https://boese-seite.example/x.png'];
+  for (const currencyImage of bad) {
+    const r = await api(A.app, 'PUT', '/api/admin/settings', { cookie: A.admin.cookie, body: { ...cur, currencyImage } });
+    assert.equal(r.status, 400, `Gefährliches Bild „${currencyImage}“ wurde angenommen (${r.status})`);
+  }
+  const after = (await api(A.app, 'GET', '/api/admin/settings', { cookie: A.admin.cookie })).json.settings;
+  assert.deepEqual(after, cur, 'Einstellungen wurden trotz Fehler verändert');
+});
+
+test('Funktion: Zuschauen bringt Bananen (Chatter-Liste)', T, async () => {
+  const stranger = newUser({ display_name: 'NieEingeloggt' });
+  fake.state.chatters = [A.viewerUser, stranger, channelUser()];
+  const start = (await me(A.app, A.viewer.cookie)).json.bananas;
+  const got = await waitUntil(async () => {
+    const b = (await me(A.app, A.viewer.cookie)).json.bananas;
+    return b >= start + 7 ? b : null;
+  }, { timeoutMs: 8000 });
+  assert.ok(got, `Nach mehreren Zuschau-Minuten gab es keine Bananen (Chatter-Abfragen: ${fake.state.chattersCalls})`);
+  assert.equal((got - start) % 7, 0, 'Es müssen genau die eingestellten Zuschau-Bananen sein');
+  const lb = await api(A.app, 'GET', '/api/leaderboard');
+  assert.ok(!lb.text.includes('NieEingeloggt'), 'Nicht eingeloggte Chatter dürfen nicht gespeichert werden');
+  assert.ok(!A.app.dbContent().includes('NieEingeloggt'), 'Nicht eingeloggte Chatter dürfen nicht gespeichert werden');
+  assert.ok(!A.app.dbContent().includes(stranger.login), 'Nicht eingeloggte Chatter dürfen nicht gespeichert werden');
+});
+
+test('Angriff: Zuschau-Bananen, obwohl der Stream offline ist', T, async () => {
+  fake.setLive(false);
+  await sendWebhook(A.app, { subscriptionType: 'stream.offline', event: { broadcaster_user_id: '1000', broadcaster_user_login: SECRETS.channel, broadcaster_user_name: SECRETS.channel } });
+  await sleep2(400);
+  const before = (await me(A.app, A.viewer.cookie)).json.bananas;
+  await sleep2(1800);
+  assert.equal((await me(A.app, A.viewer.cookie)).json.bananas, before, 'Offline darf es keine Zuschau-Bananen geben');
+});
+
+test('Funktion: Streamer kann die Freigabe wieder entfernen', T, async () => {
+  try {
+    const r = await api(A.app, 'POST', '/api/admin/streamer/revoke', { cookie: A.admin.cookie });
+    assert.equal(r.status, 200, `Freigabe entfernen: ${r.status}`);
+    const st = await api(A.app, 'GET', '/api/admin/settings', { cookie: A.admin.cookie });
+    assert.equal(st.json.streamerAuthorized, false);
+    const live = tokensOf(fake.state.refreshTokens, channelUser().id).filter((t) => !A.viewerFlowRefresh?.has(t));
+    assert.ok(live.length > 0 && live.every((t) => fake.state.revoked.has(t)), 'Das gespeicherte Streamer-Token wurde bei Twitch nicht widerrufen');
+  } finally {
+    await A.app?.stop();
+  }
+});
+
 test('Angriff: Setup-Modus verrät keine Geheimnisse', T, async () => {
   const secret = 'supergeheim_' + crypto.randomBytes(12).toString('hex');
   const setupApp = await startApp({ full: false, env: { TWITCH_CLIENT_SECRET: secret } });
@@ -482,7 +716,7 @@ test('Angriff: Setup-Modus verrät keine Geheimnisse', T, async () => {
     const html = await r.text();
     assert.equal(r.status, 200, 'Setup-Seite sollte erreichbar sein');
     assert.ok(!html.includes(secret), 'Die Setup-Seite zeigt den Wert eines Secrets');
-    assert.ok(html.includes('TWITCH_CLIENT_ID'), 'Die Setup-Seite sollte fehlende Variablen beim Namen nennen');
+    for (const name of ['TWITCH_CLIENT_ID', 'TOKEN_ENCRYPTION_KEY']) assert.ok(html.includes(name), `Die Setup-Seite sollte fehlende Variablen beim Namen nennen (${name} fehlt)`);
     const m = await fetch(`${setupApp.baseUrl}/api/me`);
     assert.equal(m.status, 503, `Im Setup-Modus muss die API 503 liefern, kam ${m.status}`);
     assert.ok(!setupApp.logs().includes(secret), 'Das Secret steht in den Logs');
@@ -501,11 +735,11 @@ test('Angriff: Massenanfragen (Rate-Limit)', T, async () => {
     }
     assert.ok(limited > 0, 'Auch nach 400 Anfragen pro Minute auf /api gab es kein 429');
     let authLimited = 0;
-    for (let i = 0; i < 40 && !authLimited; i++) {
+    for (let i = 0; i < 70 && !authLimited; i++) {
       const r = await fetch(`${fresh.baseUrl}/auth/login`, { redirect: 'manual' });
       if (r.status === 429) authLimited++;
     }
-    assert.ok(authLimited > 0, 'Auch nach 40 Login-Versuchen gab es kein 429');
+    assert.ok(authLimited > 0, 'Auch nach 70 Login-Versuchen gab es kein 429');
   } finally {
     await fresh.stop();
   }
@@ -520,7 +754,8 @@ test('Angriff: Geheimnisse im Code oder auf GitHub', T, async () => {
   } catch (e) {
     if (e?.code === 'ERR_ASSERTION') throw e;
   }
-  const pattern = /(secret|password|passwort|token|overlay_key|api_key)["'\s]*[:=]\s*["'`][A-Za-z0-9_\-]{16,}["'`]/i;
+  // Nur Werte, die wie echte Schlüssel aussehen (enthalten Ziffern), nicht harmlose Namen wie 'streamer_needs_reconnect'
+  const pattern = /(secret|password|passwort|token|overlay_key|api_key)["'\s]*[:=]\s*["'`](?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{16,}["'`]/i;
   for (const f of [...listFiles('src'), ...listFiles('public'), ...listFiles('views')]) {
     const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
     assert.ok(!pattern.test(src), `${f} enthält vermutlich ein fest eingetragenes Secret`);

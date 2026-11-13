@@ -18,6 +18,7 @@ export const SECRETS = {
   clientSecret: 'testclientsecret_' + crypto.randomBytes(16).toString('hex'),
   eventsubSecret: 'testeventsub_' + crypto.randomBytes(16).toString('hex'),
   overlayKey: 'testoverlay_' + crypto.randomBytes(24).toString('hex'),
+  tokenKey: crypto.randomBytes(32).toString('hex'),
   channel: 'teststreamer',
 };
 
@@ -61,6 +62,7 @@ export async function startApp({ fake, env = {}, full = true } = {}) {
         TWITCH_CHANNEL: SECRETS.channel,
         EVENTSUB_SECRET: SECRETS.eventsubSecret,
         OVERLAY_KEY: SECRETS.overlayKey,
+        TOKEN_ENCRYPTION_KEY: SECRETS.tokenKey,
         TWITCH_ID_URL: fake?.url,
         TWITCH_API_URL: fake?.url,
       }
@@ -140,22 +142,23 @@ export function newUser(overrides = {}) {
 }
 
 /** Kompletter Login über Fake-Twitch. Gibt Cookie-Header und Rohwerte zurück. */
-export async function login(app, fake, user, { extraCookie = '' } = {}) {
-  const r1 = await fetch(`${app.baseUrl}/auth/login`, { redirect: 'manual' });
-  if (r1.status !== 302 && r1.status !== 303) throw new Error(`/auth/login antwortet mit ${r1.status} statt Weiterleitung`);
+export async function login(app, fake, user, { extraCookie = '', path: startPath = '/auth/login', allowFail = false } = {}) {
+  const r1 = await fetch(`${app.baseUrl}${startPath}`, { redirect: 'manual' });
+  if (r1.status !== 302 && r1.status !== 303) throw new Error(`${startPath} antwortet mit ${r1.status} statt Weiterleitung`);
   const loc = new URL(r1.headers.get('location'));
   const state = loc.searchParams.get('state');
   const stateCookies = readSetCookies(r1).filter((c) => c.name === 'hub_oauth_state');
   if (!state || !stateCookies.length) throw new Error('Kein state oder kein hub_oauth_state-Cookie');
-  const code = fake.createCode(user, { redirectUri: `${app.baseUrl}/auth/callback` });
+  const code = fake.createCode(user, { redirectUri: `${app.baseUrl}/auth/callback`, scope: loc.searchParams.get('scope') || '' });
   const cookieHeader = [`hub_oauth_state=${stateCookies[0].value}`, extraCookie].filter(Boolean).join('; ');
   const r2 = await fetch(`${app.baseUrl}/auth/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`, {
     redirect: 'manual',
     headers: { cookie: cookieHeader },
   });
   const session = readSetCookies(r2).find((c) => c.name === 'hub_session' && c.value);
+  if (allowFail && !session) return { response: r2, scope: loc.searchParams.get('scope') || '' };
   if (!session) throw new Error(`Login fehlgeschlagen: /auth/callback antwortet mit ${r2.status} und ohne hub_session-Cookie`);
-  return { cookie: `hub_session=${session.value}`, sessionValue: session.value, sessionCookie: session, code, response: r2 };
+  return { cookie: `hub_session=${session.value}`, sessionValue: session.value, sessionCookie: session, code, response: r2, scope: loc.searchParams.get('scope') || '' };
 }
 
 export async function api(app, method, pathname, { cookie, body, origin = app.baseUrl, contentType = 'application/json', raw } = {}) {
@@ -299,4 +302,18 @@ export function listFiles(dir, exts) {
     else if (!exts || exts.some((e) => entry.name.endsWith(e))) out.push(rel);
   }
   return out;
+}
+
+export const sleep2 = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Wartet, bis eine Bedingung erfüllt ist (für zeitgesteuerte Abläufe wie Zuschau-Bananen). */
+export async function waitUntil(check, { timeoutMs = 6000, everyMs = 150 } = {}) {
+  const end = Date.now() + timeoutMs;
+  let last;
+  while (Date.now() < end) {
+    last = await check();
+    if (last) return last;
+    await sleep2(everyMs);
+  }
+  return last;
 }
